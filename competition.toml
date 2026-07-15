@@ -1,0 +1,220 @@
+# ============================================================================ #
+# Competition profile — the single per-competition configuration consumed by
+# every wikikit mirror and analysis command.
+#
+# Re-targeting the pipeline at a different competition starts (and mostly ends)
+# with rewriting this file. The one domain-specific piece that can stay in
+# code is score_archetypes() — supply it in the [hooks] module when the
+# generic scorer (distinct hard-keyword hits) isn't good enough.
+# ============================================================================ #
+
+[competition]
+slug = "rogii-wellbore-geology-prediction"          # Kaggle competition slug (default for --competition)
+title = "Rogii Wellbore Geology Prediction"        # display name used in generated page titles
+
+# ---------------------------------------------------------------------------- #
+# Pillars: which capture/analysis tracks run. Default is all four; hackathons
+# without a meaningful leaderboard typically drop "leaderboard".
+# This is a scored, multi-month regression competition with an active public
+# leaderboard (124 discussion threads, 1100+ mirrored notebooks) — keep all four.
+# ---------------------------------------------------------------------------- #
+#[pillars]
+#enabled = ["competition", "discussions", "notebooks", "leaderboard"]
+
+# ---------------------------------------------------------------------------- #
+# Hooks: a .py file next to this toml providing competition-specific logic
+# (currently: score_archetypes). See wiki_hooks.py for a commented stub.
+# ---------------------------------------------------------------------------- #
+[hooks]
+module = "wiki_hooks"
+
+# ---------------------------------------------------------------------------- #
+# Output roots, relative to this file's directory. Rarely needed.
+# ---------------------------------------------------------------------------- #
+#[paths]
+#wiki = "wiki"
+#analysis = "analysis"
+
+# ---------------------------------------------------------------------------- #
+# Reference solution: what "novelty" is measured against. Every notebook is
+# scored for shingle similarity to the code under `dir`; near-verbatim copies
+# are tagged with `clone_archetype`, and notebooks below `novel_sim_ceil`
+# similarity earn the novel flag. Delete this whole section if the competition
+# has no meaningful reference — the clone/novel concepts then become inert.
+#
+# No official Kaggle-provided starter/baseline notebook is vendored locally
+# under this repo, so there is no `dir` to point at. If one gets added later,
+# the natural candidates to vendor (by fork/vote count) are:
+#   - cdeotte/xgb-starter-cv-15        ("XGB Starter - [CV 15]", 202 votes)
+#   - cdeotte/nn-starter-cv-15-5       ("NN Starter - [CV 15.5]", 125 votes)
+#   - cdeotte/eda-starter              ("EDA Starter", 142 votes)
+# ---------------------------------------------------------------------------- #
+#[reference]
+#dir = "vendor"               # directory (relative to this file) with the reference code
+#label = "the Baseline"       # prose name in generated docs
+#short_label = "Baseline"     # terse form for table headers / legends
+#clone_archetype = "baseline-clone"  # archetype label given to near-verbatim copies
+#novel_sim_ceil = 0.3         # similarity at/above which a notebook is NOT novel
+#color = "#000000"            # clone color on the cluster map
+
+# ---------------------------------------------------------------------------- #
+# Feature lexicon (Phase 2 recall net): category -> keywords, matched
+# case-insensitively on whole words in the cleaned source. Deliberately
+# domain-specific; generic terms (bare "value") are too noisy.
+# Category keys become the lexicon feature columns everywhere downstream.
+#
+# All keyword counts below were verified against the actual clean (code-cell,
+# boilerplate-stripped) source of the 1095 mirrored notebooks under
+# wiki/notebooks/raw, using wikikit's own \b-bounded-word matcher — not naive
+# grep. Zero-hit candidates (e.g. "physical_model" as an underscore token,
+# "hidden markov", "dynamic programming", "mixture density", "curve matching")
+# were dropped.
+#
+# Second-pass recall sweep (candidate domain terms grepped against nb_clean,
+# cross-checked with source context): "wavelet" added (33 nb, 237 hits, real
+# DWT feature-engineering code). Checked and REJECTED: "stratigraphic" (78 nb)
+# is mostly copy-pasted competition-goal markdown ("recover the stratigraphic
+# depth...") repeated verbatim across forks, not code signal; "koopman"/"unet"
+# (4 nb each), "gaussian process" (1), "monte carlo" (2), "cross section" (1)
+# are all below the reliability bar used elsewhere in this file.
+# ---------------------------------------------------------------------------- #
+[lexicon]
+# Particle-filter / beam-search state tracking: TVT treated as a latent state
+# tracked sample-by-sample along MD. Dominant technique in this competition.
+# counts: pf=491, "particle filter"=333, beam=489, viterbi=12, hmm=14
+sequential_tracking = ["pf", "particle filter", "beam", "viterbi", "hmm", "kalman filter"]
+
+# Dynamic Time Warping of the horizontal-well GR curve against the typewell
+# GR reference curve to directly derive a TVT estimate.
+# counts: dtw=181, sakoe=105, "warping path"=102, alignment=376
+dtw_alignment = ["dtw", "sakoe", "warping path", "alignment"]
+
+# Domain/geological reasoning layered on top of (or instead of) pure ML.
+# counts: "physical model"=312, tortuosity=19, "structural dip"=4, dip_azimuth=2
+physics_structural = ["physical model", "tortuosity", "structural dip", "dip_azimuth"]
+
+# Neural sequence models operating directly on the log/trajectory sequence.
+# counts: conv1d=119, cnn=72, transformer=9, lstm=13, gru=5
+deep_learning = ["conv1d", "cnn", "transformer", "lstm", "gru"]
+
+# Post-hoc combination of multiple models/submissions.
+# counts: hill_climbing=91, "hill climb"=39, blend=455, blending=284, stacking=112, optuna=154
+ensembling = ["hill_climbing", "hill climb", "blend", "blending", "stacking", "optuna"]
+
+# Generic signal-conditioning utilities used across most archetypes alike.
+# counts: savitzky=329, smoothing=375, smooth=157, resample=24, resampling=28, "cross correlation"=2,
+#         wavelet=237 (33 notebooks; DWT-based GR feature decomposition, verified clean of the
+#         markdown-boilerplate contamination that ruled out "stratigraphic" as a candidate below)
+signal_processing = ["savitzky", "smoothing", "smooth", "resample", "resampling", "cross correlation",
+                      "wavelet"]
+
+# Gradient-boosted / linear regressors — near-universal final-stage model
+# regardless of upstream strategy, so kept out of [[archetype]] (see rule of
+# thumb in that section) but retained here for cluster-map flavor.
+# counts: lightgbm=685(file matcher ~687), catboost=556, xgboost=195, ridge=506
+tabular_models = ["catboost", "lightgbm", "xgboost", "ridge"]
+
+# Broad domain/data vocabulary — well-log & geosteering terms, alignment
+# anchors, and the leaked TVT_input prefix trick almost everyone leans on.
+# counts: typewell=692, anchor=437, prefix=410, geosteering=78, "gamma ray"=47,
+#         guarded=234, formation=468, azimuth=54, inclination=45, dip=70, fault=11
+geosteering_features = ["typewell", "anchor", "prefix", "geosteering", "gamma ray",
+                         "guarded", "formation", "azimuth", "inclination", "dip", "fault"]
+
+# ---------------------------------------------------------------------------- #
+# Optional extensions to the generic import->category map (torch->learned,
+# numpy->numeric, ... are built in). Add libraries central to the new domain,
+# e.g.  timm = "learned".
+#
+# pywt (PyWavelets, 24 imports) is the one domain-relevant library not already
+# covered by the generic map's numpy/scipy/torch/sklearn buckets. `koolbox`
+# (68 imports) is a shared Trainer-wrapper dataset several forks pull in for
+# GBM training convenience — tagged like the other "learned" trainers it wraps.
+# No dedicated DTW/particle-filter/HMM library (fastdtw, dtaidistance, hmmlearn,
+# filterpy, pykalman, tslearn) showed up — those are hand-rolled with numba
+# (already generic "numeric") instead.
+# ---------------------------------------------------------------------------- #
+[import_tags]
+pywt = "signal"
+koolbox = "learned"
+
+# ---------------------------------------------------------------------------- #
+# Leaderboard analytics: teams to track across snapshots. Entries match
+# case-insensitively against the team name or member usernames — prefer
+# usernames (stable; team names can be renamed).
+# ---------------------------------------------------------------------------- #
+[leaderboard]
+watchlist = [
+  "dougsgrott",       # the user's own Kaggle account (~/.kaggle/kaggle.json)
+  # public-LB top teams as of the 2026-07-14 21:17 UTC snapshot
+  "shu01jp", "rishikeshjani", "shreygandhi", "alijs1", "tuckerarrants",
+  "alexbstl", "ryotakaki", "ren4yu", "k256net",
+  # highest-signal notebook authors (by votes) / most-active discussion voices
+  "nihilisticneuralnet", "bernubritz", "ravaghi", "pixiux", "pilkwang",
+  "amgedalfaqih", "cdeotte", "hengck23",
+]
+
+# ---------------------------------------------------------------------------- #
+# Tagger auxiliaries: train_words are actual training-loop evidence —
+# distinguishes "does ML" from "imports torch".
+# ---------------------------------------------------------------------------- #
+[tagger]
+train_words = ["backward", "optimizer", "zero_grad", "requires_grad",
+               "criterion", "dataloader", "epoch", "epochs"]
+
+# ---------------------------------------------------------------------------- #
+# Archetypes: the primary approach labels, in display/priority order.
+#   hard  — discriminating keywords precise enough to be trusted alone (the
+#           tagger's precision tier; [lexicon] above is the recall tier).
+#   color — cluster-map color; omit to auto-assign from a fixed palette.
+# Structural labels (baseline/template, unknown, and the reference clone) are
+# appended automatically — do not list them here.
+#
+# Deliberately NOT archetypes: gradient-boosted/linear regressors (catboost/
+# lightgbm/xgboost/ridge) — used as the final-stage model by the large
+# majority of notebooks regardless of their real distinguishing strategy, so
+# they behave like a "choice everyone makes" rather than a strategy signal;
+# their vocabulary lives in the tabular_models lexicon category instead.
+# ---------------------------------------------------------------------------- #
+[[archetype]]
+name = "particle-filter/beam-tracking"
+hard = ["pf", "particle filter", "beam"]
+color = "#0072B2"
+
+[[archetype]]
+name = "dtw-curve-alignment"
+hard = ["dtw", "sakoe", "warping path"]
+color = "#D55E00"
+
+[[archetype]]
+name = "physics-informed/structural"
+hard = ["physical model", "tortuosity"]
+color = "#009E73"
+
+[[archetype]]
+name = "deep-sequence-model"
+hard = ["conv1d", "cnn", "transformer", "lstm"]
+color = "#CC79A7"
+
+[[archetype]]
+name = "ensemble-hillclimbing"
+hard = ["hill_climbing"]
+color = "#E69F00"
+
+# Fallback for structured code with no dominant keyword signal — assigned by
+# scorer rules (e.g. a floor for parsed code with several functions), not by
+# a hard set, so it is intentionally empty. See rogii-wellbore hard-won rule 6.
+#
+# STATUS (second-pass audit): 0 assignments today because wiki_hooks.py's
+# score_archetypes() floor example is still commented out (the default
+# generic scorer never emits a score for an empty `hard` set). The ~313
+# plain tabular-baseline notebooks (lightgbm/catboost + geosteering features,
+# no PF/DTW/physics/DL/hillclimbing keyword) that this archetype is meant to
+# catch currently land in "unknown" instead — confirmed by sampling: e.g.
+# cdeotte/xgb-starter-cv-15, romanrozen/catboost-baseline,
+# stpeteishii/wellbore-geology-lgbm. Wiring the floor rule is a wiki_hooks.py
+# change, out of scope for a competition.toml-only pass.
+[[archetype]]
+name = "rule-based/heuristic"
+hard = []
+color = "#999999"

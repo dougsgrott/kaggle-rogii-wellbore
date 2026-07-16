@@ -51,7 +51,11 @@ class HMMTracker:
                                     # "hard": all-or-nothing at 0.9 margin
         estimator: str = "mean",    # "mean" (posterior mean) | "map" (Viterbi)
         zshape_win: int = 100,      # rolling z-score window for "zshape"
+        center_model=None,          # per-well predictor supplying the center
+                                    # path when center_mode == "model"
+                                    # (e.g. a fitted StructurePrior)
     ):
+        self.center_model = center_model
         self.estimator = estimator
         self.zshape_win = zshape_win
         self.self_test = self_test
@@ -196,10 +200,9 @@ class HMMTracker:
         sub = self._clone(self_test=False)
         pred = sub.predict_well(pseudo)[: len(idx)]  # pseudo eval = old eval + masked prefix
         t_rmse = float(np.sqrt(np.mean((pred - truth) ** 2)))
-        # comparator = the actual fallback path (damped drift from the cut)
-        from .baselines import AnchorDrift
-
-        fallback = AnchorDrift().predict_well(pseudo)[: len(idx)]
+        # comparator = the actual fallback path, i.e. the center path itself
+        # (w = 0 in the soft gate); identical to AnchorDrift for "drift" centers
+        fallback = sub._last_centers[: len(idx)]
         a_rmse = float(np.sqrt(np.mean((fallback - truth) ** 2)))
         return t_rmse < 0.9 * a_rmse, t_rmse, a_rmse
 
@@ -242,9 +245,12 @@ class HMMTracker:
             slope = prefix_slope(well, 100.0)
             dmd = h["MD"].to_numpy()[i_anchor + 1 :] - h["MD"].to_numpy()[i_anchor]
             centers = anchor + slope * 150.0 * (1.0 - np.exp(-dmd / 150.0))
+        elif self.center_mode == "model":               # external prior path
+            centers = np.asarray(self.center_model.predict_well(well), dtype=float)
         else:                                           # "flat"
             centers = np.full(len(dz), anchor)
         n = len(centers)
+        self._last_centers = centers
 
         offsets = np.arange(-self.half_width, self.half_width + GRID_STEP, GRID_STEP)
         k = len(offsets)

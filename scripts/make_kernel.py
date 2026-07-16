@@ -17,7 +17,14 @@ USERNAME = "dougsgrott"
 COMPETITION = "rogii-wellbore-geology-prediction"
 
 
-BUNDLE_FILES = ["src/data.py", "src/models/baselines.py", "src/models/tracker.py"]
+BUNDLE_FILES = [
+    "src/data.py",
+    "src/models/baselines.py",
+    "src/models/tracker.py",
+    "src/models/structure.py",
+]
+
+BUNDLE_MODELS = {"hmm": "HMMTracker()", "hmm-structure": "HMMStructure()"}
 
 BUNDLE_DRIVER = '''
 
@@ -36,7 +43,10 @@ def _find_input():
 def main():
     os.environ["ROGII_DATA_DIR"] = str(_find_input())
     print(f"input root: {data_dir()}")
-    model = HMMTracker()
+    model = {model_expr}
+    if getattr(model, "needs_fit", False):
+        print("fitting on train wells...")
+        model.fit(iter_wells("train"))
     frames = []
     for wid in list_wells("test"):
         well = load_well(wid, "test")
@@ -56,7 +66,7 @@ main()
 '''
 
 
-def bundle_source() -> str:
+def bundle_source(model: str) -> str:
     """Concatenate real src modules into one flat namespace (no forks:
     the kernel runs the exact code that produced the CV number)."""
     import re
@@ -68,17 +78,21 @@ def bundle_source() -> str:
         code = re.sub(r"^from __future__ import .*$", "", code, flags=re.M)
         code = code.replace('Path(__file__).resolve().parent.parent', 'Path(".")')  # no __file__ in notebooks
         parts.append(f"\n# ===== {rel} =====\n{code}")
-    return "\n".join(parts) + BUNDLE_DRIVER
+    return "\n".join(parts) + BUNDLE_DRIVER.replace("{model_expr}", BUNDLE_MODELS[model])
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, choices=["anchor-drift", "residual-lgbm", "hmm"])
+    ap.add_argument(
+        "--model",
+        required=True,
+        choices=["anchor-drift", "residual-lgbm", *BUNDLE_MODELS],
+    )
     ap.add_argument("--name", required=True)
     args = ap.parse_args()
 
-    if args.model == "hmm":
-        src = bundle_source()
+    if args.model in BUNDLE_MODELS:
+        src = bundle_source(args.model)
     else:
         src = (REPO / "scripts" / "kernel_src.py").read_text()
         # Freeze the model choice into the kernel (no env vars on Kaggle).

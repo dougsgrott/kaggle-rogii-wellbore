@@ -28,6 +28,8 @@ TRAJECTORY_COLS = ["MD", "X", "Y", "Z"]
 FORMATION_COLS = ["ANCC", "ASTNU", "ASTNL", "EGFDU", "EGFDL", "BUDA"]
 TARGET_COL = "TVT"
 INPUT_TARGET_COL = "TVT_input"
+# Verified real test schema (data-notes.md): no TVT, no formation columns.
+TEST_COLS = ["MD", "X", "Y", "Z", "GR", "TVT_input"]
 
 
 def data_dir() -> Path:
@@ -71,6 +73,26 @@ class Well:
     def last_known_tvt(self) -> float:
         known = self.horizontal[INPUT_TARGET_COL].dropna()
         return float(known.iloc[-1]) if len(known) else float("nan")
+
+    @property
+    def eval_target(self) -> np.ndarray:
+        """Ground-truth TVT over the evaluation zone (train wells only)."""
+        return self.horizontal.loc[self.eval_mask, TARGET_COL].to_numpy()
+
+    def as_test(self) -> "Well":
+        """This well as it would appear in the hidden test set.
+
+        Reduces the horizontal frame to the verified test schema — the
+        leak-proof input for CV predictions: the target column simply
+        does not exist on the object a predictor sees.
+        """
+        cols = [c for c in TEST_COLS if c in self.horizontal.columns]
+        return Well(
+            well_id=self.well_id,
+            split=self.split,
+            horizontal=self.horizontal[cols].copy(),
+            typewell=self.typewell,
+        )
 
 
 def list_wells(split: Split = "train") -> list[str]:

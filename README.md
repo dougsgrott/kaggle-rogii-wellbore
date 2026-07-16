@@ -29,4 +29,4 @@ uv run python scripts/eda_sanity.py                 # dataset sanity checks
 uv run python scripts/run_cv.py --model anchor      # baseline CV run
 ```
 
-Status (2026-07-16): Phase 0 complete (calibrated CV harness, CV↔LB gap +0.05, LB 15.718). Phase 1 tracker done: exact-inference HMM with tempered GR emission and a prefix self-test gate — CV 15.14, median per-well 9.34 (anchor: 15.91/10.67). Active front: the ambiguous-well tail (issues 005–007).
+Status (2026-07-16): Phase 0 complete; Phase 1 tracker done (exact-inference HMM, tempered GR emission, prefix self-test gate) — **CV 15.14 / LB 15.083**, median per-well 9.34 (anchor: 15.91/10.67). CV↔LB calibration verified twice (+0.05, −0.06). Issue 005 (DTW-family variants) closed mostly negative — committing alignments lose, confirming the midpoint thesis. Active front: the ambiguous-well tail (issues 006–007).

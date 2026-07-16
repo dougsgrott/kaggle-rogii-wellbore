@@ -49,7 +49,11 @@ class HMMTracker:
         min_prefix_rows: int = 400,
         gate_mode: str = "soft",    # "soft": w = a^2/(a^2+t^2) on the offset;
                                     # "hard": all-or-nothing at 0.9 margin
+        estimator: str = "mean",    # "mean" (posterior mean) | "map" (Viterbi)
+        zshape_win: int = 100,      # rolling z-score window for "zshape"
     ):
+        self.estimator = estimator
+        self.zshape_win = zshape_win
         self.self_test = self_test
         self.self_test_frac = self_test_frac
         self.min_prefix_rows = min_prefix_rows
@@ -142,6 +146,32 @@ class HMMTracker:
             loglik[i] = self.ncc_beta * np.arctanh(np.clip(ncc, -0.99, 0.99))
         return loglik
 
+    def _viterbi(self, loglik: np.ndarray, sigma_cells: float, offsets: np.ndarray) -> np.ndarray:
+        """MAP path (banded max-plus DP) — the DTW-style single best alignment."""
+        n, k = loglik.shape
+        band = max(3, int(np.ceil(4 * sigma_cells)))
+        shifts = np.arange(-band, band + 1)
+        cost = -(shifts.astype(float) ** 2) / (2 * max(sigma_cells, 1e-6) ** 2)
+        delta = np.full(k, -np.inf)
+        delta[np.argmin(np.abs(offsets))] = 0.0
+        back = np.zeros((n, k), dtype=np.int8)
+        for i in range(n):
+            cand = np.full((len(shifts), k), -np.inf)
+            for j, d in enumerate(shifts):
+                if d >= 0:
+                    cand[j, d:] = delta[: k - d] + cost[j] if d else delta + cost[j]
+                else:
+                    cand[j, :d] = delta[-d:] + cost[j]
+            best = cand.argmax(axis=0)
+            delta = cand[best, np.arange(k)] + loglik[i]
+            back[i] = best
+        path = np.empty(n, dtype=int)
+        s = int(delta.argmax())
+        for i in range(n - 1, -1, -1):
+            path[i] = s
+            s = s - shifts[back[i, s]]
+        return offsets[path]
+
     # -- prefix self-test gate ----------------------------------------------
 
     def _prefix_gate(self, well: Well) -> tuple[bool, float, float]:
@@ -223,6 +253,23 @@ class HMMTracker:
         a, b = 1.0, 0.0
         if self.emission == "ncc":
             loglik = self._ncc_loglik(well, centers, offsets, i_anchor)
+        elif self.emission == "zshape":
+            # locally standardized GR on both curves: removes baseline/scale
+            # (derivative-DTW spirit); residual is in z-units, sigma_gr ~ 1
+            import pandas as pd
+
+            gh = pd.Series(self._smooth_gr(h["GR"].to_numpy()))
+            r = gh.rolling(self.zshape_win, center=True, min_periods=20)
+            zh = ((gh - r.mean()) / r.std().clip(lower=1e-6)).to_numpy()[i_anchor + 1 :]
+            gt = pd.Series(tw["GR"].to_numpy())
+            rt = gt.rolling(2 * self.zshape_win, center=True, min_periods=40)  # 0.5-ft grid
+            zt = ((gt - rt.mean()) / rt.std().clip(lower=1e-6)).to_numpy()
+            tvt_cand = centers[:, None] + offsets[None, :]
+            zt_cand = np.interp(tvt_cand, tw["TVT"].to_numpy(), zt)
+            zscore = (zh[:, None] - zt_cand) / self.sigma_gr
+            np.clip(zscore, -self.clip_z, self.clip_z, out=zscore)
+            loglik = -0.5 * self.beta * zscore**2
+            loglik[~np.isfinite(loglik)] = 0.0          # NaN GR -> uniform
         else:
             a, b = self._calibrate_gr(well)
             gr_obs = self._smooth_gr(h["GR"].to_numpy())[i_anchor + 1 :]
@@ -233,8 +280,26 @@ class HMMTracker:
             loglik = -0.5 * self.beta * zscore**2
             loglik[~np.isfinite(loglik)] = 0.0          # NaN GR -> uniform
 
-        # forward-backward with Gaussian-blur transitions on the offset grid
         sigma_cells = self.sigma_step / GRID_STEP
+
+        if self.estimator == "map":
+            mean_off = self._viterbi(loglik, sigma_cells, offsets)
+            self.last_diagnostics = {"posterior_std": None, "gr_affine": (a, b)}
+            if self.self_test:
+                use_tracker, t_rmse, a_rmse = self._prefix_gate(well)
+                w = 1.0
+                if np.isfinite(t_rmse):
+                    if self.gate_mode == "soft":
+                        w = a_rmse**2 / (a_rmse**2 + t_rmse**2)
+                    elif not use_tracker:
+                        w = 0.0
+                self.last_diagnostics.update(
+                    prefix_tracker_rmse=t_rmse, prefix_anchor_rmse=a_rmse, gate_weight=w
+                )
+                return centers + w * mean_off
+            return centers + mean_off
+
+        # forward-backward with Gaussian-blur transitions on the offset grid
         emis = np.exp(loglik - loglik.max(axis=1, keepdims=True))
 
         alpha = np.zeros((n, k))

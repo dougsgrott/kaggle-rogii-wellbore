@@ -2,6 +2,7 @@
 
 from .baselines import AnchorDrift, AnchorLastValue
 from .residual_lgbm import ResidualLGBM
+from .router import RouterBlend
 from .structure import HMMStructure, StructurePrior
 from .tracker import HMMTracker
 
@@ -12,4 +13,5 @@ REGISTRY = {
     "hmm": HMMTracker,
     "structure-prior": StructurePrior,
     "hmm-structure": HMMStructure,
+    "router": RouterBlend,
 }

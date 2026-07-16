@@ -54,8 +54,12 @@ class HMMTracker:
         center_model=None,          # per-well predictor supplying the center
                                     # path when center_mode == "model"
                                     # (e.g. a fitted StructurePrior)
+        gate_power: float = 1.0,    # soft-gate exponent on the replay MSEs:
+                                    # w = m_a^p / (m_a^p + m_t^p); p=1 is the
+                                    # proven inverse-MSE gate, p<1 is softer
     ):
         self.center_model = center_model
+        self.gate_power = gate_power
         self.estimator = estimator
         self.zshape_win = zshape_win
         self.self_test = self_test
@@ -296,7 +300,9 @@ class HMMTracker:
                 w = 1.0
                 if np.isfinite(t_rmse):
                     if self.gate_mode == "soft":
-                        w = a_rmse**2 / (a_rmse**2 + t_rmse**2)
+                        w = a_rmse ** (2 * self.gate_power) / (
+                            a_rmse ** (2 * self.gate_power) + t_rmse ** (2 * self.gate_power)
+                        )
                     elif not use_tracker:
                         w = 0.0
                 self.last_diagnostics.update(
@@ -341,7 +347,9 @@ class HMMTracker:
             w = 1.0
             if np.isfinite(t_rmse):
                 if self.gate_mode == "soft":
-                    w = a_rmse**2 / (a_rmse**2 + t_rmse**2)
+                    w = a_rmse ** (2 * self.gate_power) / (
+                        a_rmse ** (2 * self.gate_power) + t_rmse ** (2 * self.gate_power)
+                    )
                 elif not use_tracker:
                     w = 0.0
             self.last_diagnostics.update(

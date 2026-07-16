@@ -275,14 +275,24 @@ class StructurePrior:
 
 
 class HMMStructure:
-    """HMM tracker running on the structure prior's center path."""
+    """HMM tracker running on the structure prior's center path.
+
+    The prior runs ungated by default (issue 007): nesting the prior's
+    internal drift-gate under the tracker's gate corrupts the center path
+    and double-counts drift — a single outer gate is worth −0.8 RMSE on
+    the LOO sample. The tracker's prefix gate (comparator = the center
+    path itself) is the one safety mechanism.
+    """
 
     needs_fit = True
 
-    def __init__(self, **tracker_overrides):
+    def __init__(self, prior_self_test: bool = False, **tracker_overrides):
         from .tracker import HMMTracker
 
-        self.prior = StructurePrior()
+        self.prior = StructurePrior(self_test=prior_self_test)
+        # gate_power 0.5 (softer than the classic inverse-MSE gate): full-set
+        # CV 11.4983 vs 11.6391 at p=1 (issue 007).
+        tracker_overrides.setdefault("gate_power", 0.5)
         self.tracker = HMMTracker(
             center_mode="model", center_model=self.prior, **tracker_overrides
         )

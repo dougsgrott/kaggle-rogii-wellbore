@@ -17,18 +17,75 @@ USERNAME = "dougsgrott"
 COMPETITION = "rogii-wellbore-geology-prediction"
 
 
+BUNDLE_FILES = ["src/data.py", "src/models/baselines.py", "src/models/tracker.py"]
+
+BUNDLE_DRIVER = '''
+
+# ---------------------------------------------------------------- driver
+def _find_input():
+    env = os.environ.get("ROGII_DATA_DIR")
+    if env:
+        return Path(env)
+    base = Path("/kaggle/input")
+    hits = sorted(base.glob("*/test")) or sorted(base.glob("*/*/test"))
+    if not hits:
+        raise FileNotFoundError(f"no */test folder under {base}")
+    return hits[0].parent
+
+
+def main():
+    os.environ["ROGII_DATA_DIR"] = str(_find_input())
+    print(f"input root: {data_dir()}")
+    model = HMMTracker()
+    frames = []
+    for wid in list_wells("test"):
+        well = load_well(wid, "test")
+        pred = model.predict_well(well)
+        anchor = well.last_known_tvt
+        if not np.isfinite(pred).all():
+            pred = np.where(np.isfinite(pred), pred, anchor)
+        frames.append(pd.DataFrame({"id": well.eval_ids, "tvt": pred}))
+        d = model.last_diagnostics or {}
+        print(f"{wid}: {len(pred)} rows, anchor={anchor:.1f}, gate_w={d.get('gate_weight')}")
+    sub = pd.concat(frames, ignore_index=True)
+    sub.to_csv("submission.csv", index=False)
+    print(f"submission.csv written: {len(sub)} rows")
+
+
+main()
+'''
+
+
+def bundle_source() -> str:
+    """Concatenate real src modules into one flat namespace (no forks:
+    the kernel runs the exact code that produced the CV number)."""
+    import re
+
+    parts = ["import os\nfrom pathlib import Path\n"]
+    for rel in BUNDLE_FILES:
+        code = (REPO / rel).read_text()
+        code = re.sub(r"^\s*from \.[\.\w]* import .*$", "", code, flags=re.M)
+        code = re.sub(r"^from __future__ import .*$", "", code, flags=re.M)
+        code = code.replace('Path(__file__).resolve().parent.parent', 'Path(".")')  # no __file__ in notebooks
+        parts.append(f"\n# ===== {rel} =====\n{code}")
+    return "\n".join(parts) + BUNDLE_DRIVER
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, choices=["anchor-drift", "residual-lgbm"])
+    ap.add_argument("--model", required=True, choices=["anchor-drift", "residual-lgbm", "hmm"])
     ap.add_argument("--name", required=True)
     args = ap.parse_args()
 
-    src = (REPO / "scripts" / "kernel_src.py").read_text()
-    # Freeze the model choice into the kernel (no env vars on Kaggle).
-    src = src.replace(
-        'MODEL = os.environ.get("ROGII_MODEL", "anchor-drift")',
-        f'MODEL = os.environ.get("ROGII_MODEL", "{args.model}")',
-    )
+    if args.model == "hmm":
+        src = bundle_source()
+    else:
+        src = (REPO / "scripts" / "kernel_src.py").read_text()
+        # Freeze the model choice into the kernel (no env vars on Kaggle).
+        src = src.replace(
+            'MODEL = os.environ.get("ROGII_MODEL", "anchor-drift")',
+            f'MODEL = os.environ.get("ROGII_MODEL", "{args.model}")',
+        )
 
     out = REPO / "submissions" / args.name
     out.mkdir(parents=True, exist_ok=True)

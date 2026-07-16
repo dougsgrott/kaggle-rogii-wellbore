@@ -25,6 +25,7 @@ def main() -> None:
     ap.add_argument("--n-folds", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0, help="score only the first N wells (0 = all)")
+    ap.add_argument("--jobs", type=int, default=0, help="parallel workers (0 = all cores, 1 = serial)")
     ap.add_argument("--name", default=None, help="run name (default: model name)")
     args = ap.parse_args()
 
@@ -33,7 +34,7 @@ def main() -> None:
     folds = make_folds(args.n_folds, mode=args.mode, seed=args.seed)
     well_ids = sorted(folds)[: args.limit] if args.limit else None
 
-    result = run_cv(factory, folds=folds, well_ids=well_ids)
+    result = run_cv(factory, folds=folds, well_ids=well_ids, n_jobs=args.jobs)
 
     out_dir = Path("analysis/cv") / name
     out_dir.mkdir(parents=True, exist_ok=True)

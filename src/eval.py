@@ -16,7 +16,10 @@ suffixes, i.e. local scoring replicates the hidden-test geometry exactly.
 
 from __future__ import annotations
 
+import multiprocessing as mp
+import os
 from dataclasses import dataclass, field
+from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from typing import Callable, Iterable, Protocol, Sequence
 
@@ -109,6 +112,23 @@ def per_well_report(
 
 # ---------------------------------------------------------------------------
 # CV runner
+#
+# Wells are independent, so prediction parallelizes across fork()ed worker
+# processes: the (fitted) model is inherited copy-on-write via a module
+# global — no pickling of KD-trees or DataFrames. This module is not part
+# of the kernel bundle (scripts/make_kernel.py), so the submission path is
+# untouched.
+
+_PAR_MODEL: WellPredictor | None = None
+
+
+def _predict_one(wid: str) -> tuple[str, np.ndarray, np.ndarray, np.ndarray]:
+    well = load_well(wid, "train")
+    y = np.asarray(_PAR_MODEL.predict_well(well.as_test()), dtype=float)
+    n_eval = int(well.eval_mask.sum())
+    if len(y) != n_eval:
+        raise ValueError(f"{wid}: predictor returned {len(y)} values for {n_eval} eval rows")
+    return wid, y, well.eval_target, well.horizontal.loc[well.eval_mask, "MD"].to_numpy()
 
 
 def run_cv(
@@ -116,32 +136,55 @@ def run_cv(
     folds: dict[str, int] | None = None,
     well_ids: Sequence[str] | None = None,
     verbose: bool = True,
+    n_jobs: int = 0,
 ) -> CVResult:
     """Score a model over train wells with leak-proof inputs.
 
     ``folds`` is required for models with ``needs_fit``; per-well predictors
     are scored in a single pass. ``well_ids`` restricts to a subset (fast
-    iteration); tail numbers on subsets are indicative only.
+    iteration); tail numbers on subsets are indicative only. ``n_jobs``
+    parallelizes per-well prediction (0 = all cores, 1 = serial; needs
+    fork(), falls back to serial elsewhere). Results are identical to the
+    serial path for deterministic models.
     """
     ids = list(well_ids) if well_ids is not None else list_wells("train")
+    if n_jobs <= 0:
+        # The HMM/prior predictions are memory-bandwidth-bound (measured:
+        # 10-way concurrency inflates per-well time ~4.5x); hyperthreads
+        # only add contention, so auto = physical cores.
+        n_jobs = max(1, (os.cpu_count() or 2) // 2)
+    if "fork" not in mp.get_all_start_methods():
+        n_jobs = 1
     probe = factory()
     preds: dict[str, np.ndarray] = {}
     truths: dict[str, np.ndarray] = {}
     mds: dict[str, np.ndarray] = {}
 
-    def _score(model: WellPredictor, wid: str) -> None:
-        well = load_well(wid, "train")
-        y = model.predict_well(well.as_test())
-        n_eval = int(well.eval_mask.sum())
-        if len(y) != n_eval:
-            raise ValueError(f"{wid}: predictor returned {len(y)} values for {n_eval} eval rows")
-        preds[wid] = np.asarray(y, dtype=float)
-        truths[wid] = well.eval_target
-        mds[wid] = well.horizontal.loc[well.eval_mask, "MD"].to_numpy()
+    def _score_many(model: WellPredictor, wids: Sequence[str]) -> None:
+        global _PAR_MODEL
+        if n_jobs == 1 or len(wids) < 2:
+            for wid in wids:
+                preds[wid], truths[wid], mds[wid] = _predict_one_with(model, wid)
+            return
+        _PAR_MODEL = model
+        try:
+            with mp.get_context("fork").Pool(min(n_jobs, len(wids))) as pool:
+                for wid, y, t, md in pool.imap_unordered(_predict_one, wids):
+                    preds[wid], truths[wid], mds[wid] = y, t, md
+        finally:
+            _PAR_MODEL = None
+
+    def _predict_one_with(model, wid):
+        global _PAR_MODEL
+        _PAR_MODEL = model
+        try:
+            _, y, t, md = _predict_one(wid)
+        finally:
+            _PAR_MODEL = None
+        return y, t, md
 
     if not getattr(probe, "needs_fit", True):
-        for wid in ids:
-            _score(probe, wid)
+        _score_many(probe, ids)
     else:
         if folds is None:
             raise ValueError("folds required for models with needs_fit=True")
@@ -149,12 +192,19 @@ def run_cv(
         for f in sorted(set(fold_of.values())):
             model = factory()
             train_ids = [w for w in folds if folds[w] != f and (well_ids is None or w in fold_of)]
-            model.fit(load_well(w, "train") for w in train_ids)
-            for wid in [w for w, ff in fold_of.items() if ff == f]:
-                _score(model, wid)
+            if n_jobs > 1:
+                with ThreadPool(min(8, n_jobs)) as tp:  # CSV parse releases the GIL
+                    model.fit(tp.imap(lambda w: load_well(w, "train"), train_ids, chunksize=4))
+            else:
+                model.fit(load_well(w, "train") for w in train_ids)
+            _score_many(model, [w for w, ff in fold_of.items() if ff == f])
             if verbose:
                 print(f"fold {f}: fitted on {len(train_ids)} wells")
 
+    # restore deterministic ordering (imap_unordered scrambles it)
+    preds = {w: preds[w] for w in ids}
+    truths = {w: truths[w] for w in ids}
+    mds = {w: mds[w] for w in ids}
     result = per_well_report(truths, preds, mds)
     if verbose:
         print(f"global RMSE: {result.global_rmse:.4f} over {len(ids)} wells")

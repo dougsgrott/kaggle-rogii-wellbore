@@ -2,9 +2,11 @@
 
 from .baselines import AnchorDrift, AnchorLastValue
 from .residual_lgbm import ResidualLGBM
+from .tracker import HMMTracker
 
 REGISTRY = {
     "anchor": AnchorLastValue,
     "anchor-drift": AnchorDrift,
     "residual-lgbm": ResidualLGBM,
+    "hmm": HMMTracker,
 }

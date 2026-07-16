@@ -29,4 +29,4 @@ uv run python scripts/eda_sanity.py                 # dataset sanity checks
 uv run python scripts/run_cv.py --model anchor      # baseline CV run
 ```
 
-Status (2026-07-16): Phase 0 complete — data layer, calibrated CV harness (CV↔LB gap +0.05 on the first submission, LB 15.718), three baselines. Current work: Phase 1, the GR↔typewell tracker (`docs/issues/004-particle-filter-tracker.md`).
+Status (2026-07-16): Phase 0 complete (calibrated CV harness, CV↔LB gap +0.05, LB 15.718). Phase 1 tracker done: exact-inference HMM with tempered GR emission and a prefix self-test gate — CV 15.14, median per-well 9.34 (anchor: 15.91/10.67). Active front: the ambiguous-well tail (issues 005–007).

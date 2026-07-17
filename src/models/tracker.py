@@ -202,6 +202,17 @@ class HMMTracker:
         h2.loc[h2.index >= idx[0], "TVT_input"] = np.nan
         pseudo = Well(well.well_id, well.split, h2, well.typewell)
         sub = self._clone(self_test=False)
+        if sub.center_model is not None:
+            # _clone shares center_model by reference; if left shared, this
+            # probe's predict_well(pseudo) call below would overwrite
+            # self.center_model.last_diagnostics with the *pseudo*-well's
+            # values before the caller ever reads them for the real well.
+            # A shallow copy keeps the read-only fitted arrays (KD-tree,
+            # calibration data) shared but gives the probe its own
+            # diagnostics slot.
+            import copy
+
+            sub.center_model = copy.copy(sub.center_model)
         pred = sub.predict_well(pseudo)[: len(idx)]  # pseudo eval = old eval + masked prefix
         t_rmse = float(np.sqrt(np.mean((pred - truth) ** 2)))
         # comparator = the actual fallback path, i.e. the center path itself
